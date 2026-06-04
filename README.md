@@ -37,14 +37,14 @@ npm run dev
 
 | Setting | Value |
 |---------|--------|
-| **Build Command** | `npm install && npm run build` |
+| **Build Command** | `npm install` (runs `postinstall` → compiles `dist/`) |
 | **Start Command** | `npm start` |
 
 Or connect the repo and use the included `render.yaml` blueprint.
 
 Required env vars on Render: `MONGODB_URI`, `FRONTEND_ORIGIN` (your live frontend URL).
 
-`dist/` is not in git — TypeScript must compile during the build step. If you only run `npm install`, start will fail with `Cannot find module dist/index.js`.
+`dist/` is generated on install — do not commit it. If deploy still fails, set Build Command to `npm install && npm run build` and Start Command to `npm start`.
 
 ## Deploy (other hosts)
 
