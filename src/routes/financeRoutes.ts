@@ -6,9 +6,12 @@ import { Category } from '../models/Category';
 import { Expense } from '../models/Expense';
 import { Goal } from '../models/Goal';
 import { RecurringRule } from '../models/RecurringRule';
+import { Income } from '../models/Income';
 import {
   addExpense,
+  addIncome,
   deleteExpense,
+  deleteIncome,
   getCategoryPerformance,
   getLedgerEntries,
   getMonthSummary,
@@ -16,6 +19,7 @@ import {
   setBudgetForMonth,
   setIncomeForMonth,
   updateExpense,
+  updateIncome,
 } from '../services/financeService';
 import { escapeRegex, parsePagination, toPaginatedResult } from '../utils/pagination';
 
@@ -94,6 +98,76 @@ financeRoutes.delete('/budgets/:id', async (request, response) => {
     return;
   }
   response.json({ message: 'Budget deleted' });
+});
+
+financeRoutes.post('/incomes', async (request, response, next) => {
+  try {
+    const schema = z.object({
+      amountRupees: rupeesSchema,
+      source: z.string().min(1),
+      note: z.string().optional(),
+      date: z.coerce.date().optional(),
+    });
+    const input = schema.parse(request.body);
+    const income = await addIncome(input);
+    response.json(income);
+  } catch (error) {
+    next(error);
+  }
+});
+
+financeRoutes.get('/incomes', async (request, response) => {
+  const dateKey = typeof request.query.dateKey === 'string' ? request.query.dateKey : '';
+  const monthKey = typeof request.query.monthKey === 'string' ? request.query.monthKey : '';
+  const source = typeof request.query.source === 'string' ? request.query.source.trim() : '';
+  const note = typeof request.query.note === 'string' ? request.query.note.trim() : '';
+  const { limit, page, skip } = parsePagination(request.query.limit, request.query.page, 25, 500);
+
+  const query: Record<string, unknown> = {};
+  if (dateKey) query.dateKey = dateKey;
+  if (monthKey) query.monthKey = monthKey;
+  if (source) query.source = source;
+  if (note) query.note = { $regex: escapeRegex(note), $options: 'i' };
+
+  const [items, total] = await Promise.all([
+    Income.find(query).sort({ date: -1, createdAt: -1 }).skip(skip).limit(limit),
+    Income.countDocuments(query),
+  ]);
+
+  response.json(toPaginatedResult(items, total, page, limit));
+});
+
+financeRoutes.patch('/incomes/:id', async (request, response, next) => {
+  try {
+    const schema = z.object({
+      amountRupees: z.number().min(0).optional(),
+      source: z.string().min(1).optional(),
+      note: z.string().optional(),
+      date: z.coerce.date().optional(),
+    });
+    const input = schema.parse(request.body);
+    const updated = await updateIncome(request.params.id, input);
+    if (!updated) {
+      response.status(404).json({ message: 'Income not found' });
+      return;
+    }
+    response.json(updated);
+  } catch (error) {
+    next(error);
+  }
+});
+
+financeRoutes.delete('/incomes/:id', async (request, response, next) => {
+  try {
+    const result = await deleteIncome(request.params.id);
+    if (!result) {
+      response.status(404).json({ message: 'Income not found' });
+      return;
+    }
+    response.json(result);
+  } catch (error) {
+    next(error);
+  }
 });
 
 financeRoutes.post('/expenses', async (request, response, next) => {

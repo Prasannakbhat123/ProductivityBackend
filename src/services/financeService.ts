@@ -3,6 +3,7 @@ import { AnalyticsLog } from '../models/AnalyticsLog';
 import { BudgetCategory } from '../models/BudgetCategory';
 import { Category } from '../models/Category';
 import { Expense } from '../models/Expense';
+import { Income } from '../models/Income';
 import { IncomePlan } from '../models/IncomePlan';
 import { SavingsLedgerEntry } from '../models/SavingsLedgerEntry';
 import { parsePagination, toPaginatedResult } from '../utils/pagination';
@@ -24,6 +25,25 @@ type UpdateExpenseInput = {
   note?: string;
   date?: Date;
 };
+
+type AddIncomeInput = {
+  amountRupees: number;
+  source: string;
+  note?: string;
+  date?: Date;
+};
+
+type UpdateIncomeInput = {
+  amountRupees?: number;
+  source?: string;
+  note?: string;
+  date?: Date;
+};
+
+async function sumIncomeRupees(filter: Record<string, unknown>): Promise<number> {
+  const rows = await Income.find(filter).select('amountRupees');
+  return rows.reduce((sum, row) => sum + row.amountRupees, 0);
+}
 
 type ScopeMode = 'full' | 'todate' | 'auto';
 
@@ -63,13 +83,13 @@ function resolveScopedEndExclusive(monthKey: string, scope: ScopeMode, dateKey?:
 }
 
 async function getIncomeAndSpentForMonth(monthKey: string): Promise<{ incomeRupees: number; spentRupees: number }> {
-  const [incomePlan, expenses] = await Promise.all([
-    IncomePlan.findOne({ monthKey }),
+  const [incomeRupees, expenses] = await Promise.all([
+    sumIncomeRupees({ monthKey }),
     Expense.find({ monthKey }).select('amountRupees'),
   ]);
 
   return {
-    incomeRupees: incomePlan?.amountRupees ?? 0,
+    incomeRupees,
     spentRupees: expenses.reduce((sum, item) => sum + item.amountRupees, 0),
   };
 }
@@ -133,13 +153,81 @@ async function appendSavingsLedgerEntry(params: {
 }
 
 export async function setIncomeForMonth(monthKey: string, amountRupees: number, note = '') {
-  const income = await IncomePlan.findOneAndUpdate(
+  await IncomePlan.findOneAndUpdate(
     { monthKey },
     { monthKey, amountRupees, note },
     { returnDocument: 'after', upsert: true },
   );
+
+  const date = new Date(`${monthKey}-01T12:00:00.000Z`);
+  const income = await Income.findOneAndUpdate(
+    { monthKey, source: 'Salary' },
+    {
+      date,
+      dateKey: getDateKey(date),
+      monthKey,
+      amountRupees,
+      source: 'Salary',
+      note: note || 'Monthly salary',
+    },
+    { returnDocument: 'after', upsert: true },
+  );
+
   publishRealtimeEvent('income.updated', income);
+  publishRealtimeEvent('month.summary.updated', await getMonthSummary(monthKey));
   return income;
+}
+
+export async function addIncome(input: AddIncomeInput) {
+  const date = input.date ?? new Date();
+  const monthKey = getMonthKey(date);
+  const dateKey = getDateKey(date);
+
+  const income = await Income.create({
+    date,
+    dateKey,
+    monthKey,
+    amountRupees: input.amountRupees,
+    source: input.source.trim(),
+    note: input.note ?? '',
+  });
+
+  publishRealtimeEvent('income.created', income);
+  publishRealtimeEvent('month.summary.updated', await getMonthSummary(monthKey));
+  return income;
+}
+
+export async function updateIncome(incomeId: string, input: UpdateIncomeInput) {
+  const existing = await Income.findById(incomeId);
+  if (!existing) {
+    return null;
+  }
+
+  const date = input.date ?? existing.date;
+  existing.date = date;
+  existing.dateKey = getDateKey(date);
+  existing.monthKey = getMonthKey(date);
+  if (typeof input.amountRupees === 'number') existing.amountRupees = input.amountRupees;
+  if (typeof input.source === 'string') existing.source = input.source.trim();
+  if (typeof input.note === 'string') existing.note = input.note;
+
+  await existing.save();
+  publishRealtimeEvent('income.updated', existing);
+  publishRealtimeEvent('month.summary.updated', await getMonthSummary(existing.monthKey));
+  return existing;
+}
+
+export async function deleteIncome(incomeId: string) {
+  const existing = await Income.findById(incomeId);
+  if (!existing) {
+    return null;
+  }
+
+  const monthKey = existing.monthKey;
+  await existing.deleteOne();
+  publishRealtimeEvent('income.deleted', { incomeId, monthKey });
+  publishRealtimeEvent('month.summary.updated', await getMonthSummary(monthKey));
+  return { ok: true };
 }
 
 export async function setBudgetForMonth(monthKey: string, category: string, limitRupees: number) {
@@ -323,12 +411,19 @@ export async function getMonthSummary(monthKey: string, scope: ScopeMode = 'full
     },
   };
 
+  const incomeQuery = {
+    date: {
+      $gte: start,
+      $lt: scopedEndExclusive,
+    },
+  };
+
   const previousMonthKey = getPreviousMonthKey(monthKey);
-  const [incomePlan, budgets, previousMonthBudgets, expenses, ledger] = await Promise.all([
-    IncomePlan.findOne({ monthKey }),
+  const [budgets, previousMonthBudgets, expenses, incomes, ledger] = await Promise.all([
     BudgetCategory.find({ monthKey }).sort({ category: 1 }),
     BudgetCategory.find({ monthKey: previousMonthKey }).select('category limitRupees'),
     Expense.find(expenseQuery).sort({ date: -1 }),
+    Income.find(incomeQuery).sort({ date: -1 }),
     SavingsLedgerEntry.find(ledgerQuery).sort({ date: -1, createdAt: -1 }),
   ]);
 
@@ -340,7 +435,7 @@ export async function getMonthSummary(monthKey: string, scope: ScopeMode = 'full
     previousMonthBudgets: previousMonthBudgets as Array<{ category: string; limitRupees: number }>,
   });
 
-  const totalIncomeRupees = incomePlan?.amountRupees ?? 0;
+  const totalIncomeRupees = incomes.reduce((sum, item) => sum + item.amountRupees, 0);
   const totalBudgetRupees = Array.from(effectiveBudgetLimitByCategory.values()).reduce((sum, limitRupees) => sum + limitRupees, 0);
   const totalSpentRupees = expenses.reduce((sum, item) => sum + item.amountRupees, 0);
   const totalOverspendAdjustmentsRupees = ledger
@@ -360,6 +455,7 @@ export async function getMonthSummary(monthKey: string, scope: ScopeMode = 'full
     totalOverspendAdjustmentsRupees,
     budgets,
     expenses,
+    incomes,
     hasFutureDaysExcluded: scopedEndExclusive.getTime() < endExclusive.getTime(),
   };
 }
