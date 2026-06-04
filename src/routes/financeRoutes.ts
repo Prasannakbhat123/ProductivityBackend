@@ -21,6 +21,8 @@ import {
   updateExpense,
   updateIncome,
 } from '../services/financeService';
+import { formatRupeesForLog, recordActivityLog } from '../services/activityLogService';
+import { getDateKey, getMonthKey } from '../utils/time';
 import { escapeRegex, parsePagination, toPaginatedResult } from '../utils/pagination';
 
 export const financeRoutes = Router();
@@ -97,6 +99,16 @@ financeRoutes.delete('/budgets/:id', async (request, response) => {
     response.status(404).json({ message: 'Budget not found' });
     return;
   }
+  await recordActivityLog({
+    action: 'budget.deleted',
+    entityType: 'budget',
+    entityId: String(budget._id),
+    monthKey: budget.monthKey,
+    dateKey: `${budget.monthKey}-01`,
+    category: budget.category,
+    amountRupees: budget.limitRupees,
+    message: `Removed ${budget.category} budget for ${budget.monthKey}`,
+  });
   response.json({ message: 'Budget deleted' });
 });
 
@@ -332,6 +344,16 @@ financeRoutes.post('/goals', async (request, response, next) => {
       targetRupees: input.targetRupees ?? 0,
       dueDate: input.dueDate ?? null,
     });
+    const monthKey = getMonthKey(new Date());
+    await recordActivityLog({
+      action: 'goal.created',
+      entityType: 'goal',
+      entityId: String(goal._id),
+      monthKey,
+      dateKey: getDateKey(new Date()),
+      label: goal.title,
+      message: `Created goal "${goal.title}"`,
+    });
     response.json(goal);
   } catch (error) {
     next(error);
@@ -353,6 +375,16 @@ financeRoutes.post('/goals/:id/complete', async (request, response) => {
     response.status(404).json({ message: 'Goal not found' });
     return;
   }
+  const monthKey = getMonthKey(new Date());
+  await recordActivityLog({
+    action: 'goal.completed',
+    entityType: 'goal',
+    entityId: String(goal._id),
+    monthKey,
+    dateKey: getDateKey(new Date()),
+    label: goal.title,
+    message: `Completed goal "${goal.title}"`,
+  });
   response.json(goal);
 });
 
@@ -372,6 +404,16 @@ financeRoutes.patch('/goals/:id/status', async (request, response, next) => {
       response.status(404).json({ message: 'Goal not found' });
       return;
     }
+    const monthKey = getMonthKey(new Date());
+    await recordActivityLog({
+      action: input.isCompleted ? 'goal.completed' : 'goal.reopened',
+      entityType: 'goal',
+      entityId: String(goal._id),
+      monthKey,
+      dateKey: getDateKey(new Date()),
+      label: goal.title,
+      message: input.isCompleted ? `Completed goal "${goal.title}"` : `Reopened goal "${goal.title}"`,
+    });
     response.json(goal);
   } catch (error) {
     next(error);
@@ -395,6 +437,18 @@ financeRoutes.post('/recurring', async (request, response, next) => {
     const rule = await RecurringRule.create({
       ...input,
       isActive: true,
+    });
+    const monthKey = getMonthKey(new Date());
+    await recordActivityLog({
+      action: 'recurring.created',
+      entityType: 'recurring',
+      entityId: String(rule._id),
+      monthKey,
+      dateKey: getDateKey(new Date()),
+      category: rule.category,
+      label: rule.title,
+      amountRupees: rule.amountRupees,
+      message: `Created recurring rule "${rule.title}" (${rule.category}) ${formatRupeesForLog(rule.amountRupees)}`,
     });
     response.json(rule);
   } catch (error) {
@@ -427,6 +481,18 @@ financeRoutes.patch('/recurring/:id', async (request, response, next) => {
       response.status(404).json({ message: 'Recurring rule not found' });
       return;
     }
+    const monthKey = getMonthKey(new Date());
+    await recordActivityLog({
+      action: 'recurring.updated',
+      entityType: 'recurring',
+      entityId: String(rule._id),
+      monthKey,
+      dateKey: getDateKey(new Date()),
+      category: rule.category,
+      label: rule.title,
+      amountRupees: rule.amountRupees,
+      message: `Updated recurring rule "${rule.title}"`,
+    });
     response.json(rule);
   } catch (error) {
     next(error);
@@ -439,6 +505,17 @@ financeRoutes.delete('/recurring/:id', async (request, response) => {
     response.status(404).json({ message: 'Recurring rule not found' });
     return;
   }
+  const monthKey = getMonthKey(new Date());
+  await recordActivityLog({
+    action: 'recurring.deleted',
+    entityType: 'recurring',
+    entityId: String(rule._id),
+    monthKey,
+    dateKey: getDateKey(new Date()),
+    category: rule.category,
+    label: rule.title,
+    message: `Deleted recurring rule "${rule.title}"`,
+  });
   response.json({ message: 'Recurring rule deleted' });
 });
 
@@ -455,6 +532,16 @@ financeRoutes.patch('/recurring/:id/toggle', async (request, response, next) => 
       response.status(404).json({ message: 'Recurring rule not found' });
       return;
     }
+    const monthKey = getMonthKey(new Date());
+    await recordActivityLog({
+      action: 'recurring.toggled',
+      entityType: 'recurring',
+      entityId: String(rule._id),
+      monthKey,
+      dateKey: getDateKey(new Date()),
+      label: rule.title,
+      message: `${input.isActive ? 'Enabled' : 'Disabled'} recurring rule "${rule.title}"`,
+    });
     response.json(rule);
   } catch (error) {
     next(error);
@@ -483,6 +570,17 @@ financeRoutes.post('/categories', async (request, response, next) => {
     });
     const input = schema.parse(request.body);
     const category = await Category.create(input);
+    const monthKey = getMonthKey(new Date());
+    await recordActivityLog({
+      action: 'category.created',
+      entityType: 'category',
+      entityId: String(category._id),
+      monthKey,
+      dateKey: getDateKey(new Date()),
+      category: category.name,
+      label: category.name,
+      message: `Created category "${category.name}"`,
+    });
     response.status(201).json(category);
   } catch (error) {
     next(error);
@@ -512,6 +610,17 @@ financeRoutes.patch('/categories/:id', async (request, response, next) => {
       response.status(404).json({ message: 'Category not found' });
       return;
     }
+    const monthKey = getMonthKey(new Date());
+    await recordActivityLog({
+      action: 'category.updated',
+      entityType: 'category',
+      entityId: String(category._id),
+      monthKey,
+      dateKey: getDateKey(new Date()),
+      category: category.name,
+      label: category.name,
+      message: `Updated category "${category.name}"`,
+    });
     response.json(category);
   } catch (error) {
     next(error);
@@ -525,6 +634,17 @@ financeRoutes.delete('/categories/:id', async (request, response, next) => {
       response.status(404).json({ message: 'Category not found' });
       return;
     }
+    const monthKey = getMonthKey(new Date());
+    await recordActivityLog({
+      action: 'category.deleted',
+      entityType: 'category',
+      entityId: String(category._id),
+      monthKey,
+      dateKey: getDateKey(new Date()),
+      category: category.name,
+      label: category.name,
+      message: `Deleted category "${category.name}"`,
+    });
     response.json({ message: 'Category deleted' });
   } catch (error) {
     next(error);

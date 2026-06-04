@@ -8,6 +8,7 @@ import { IncomePlan } from '../models/IncomePlan';
 import { SavingsLedgerEntry } from '../models/SavingsLedgerEntry';
 import { parsePagination, toPaginatedResult } from '../utils/pagination';
 import { getDateKey, getMonthKey, getWeekKey } from '../utils/time';
+import { formatRupeesForLog, recordActivityLog } from './activityLogService';
 import { publishRealtimeEvent } from './realtime';
 
 type AddExpenseInput = {
@@ -152,6 +153,12 @@ async function appendSavingsLedgerEntry(params: {
   });
 }
 
+const MONTHLY_SALARY_SOURCE = 'Salary';
+
+function isMonthlySalarySource(source: string): boolean {
+  return source.trim().toLowerCase() === MONTHLY_SALARY_SOURCE.toLowerCase();
+}
+
 export async function setIncomeForMonth(monthKey: string, amountRupees: number, note = '') {
   await IncomePlan.findOneAndUpdate(
     { monthKey },
@@ -159,22 +166,29 @@ export async function setIncomeForMonth(monthKey: string, amountRupees: number, 
     { returnDocument: 'after', upsert: true },
   );
 
+  await Income.deleteMany({ monthKey, source: { $regex: /^salary$/i } });
+
   const date = new Date(`${monthKey}-01T12:00:00.000Z`);
-  const income = await Income.findOneAndUpdate(
-    { monthKey, source: 'Salary' },
-    {
-      date,
-      dateKey: getDateKey(date),
-      monthKey,
-      amountRupees,
-      source: 'Salary',
-      note: note || 'Monthly salary',
-    },
-    { returnDocument: 'after', upsert: true },
-  );
+  const income = await Income.create({
+    date,
+    dateKey: getDateKey(date),
+    monthKey,
+    amountRupees,
+    source: MONTHLY_SALARY_SOURCE,
+    note: note || 'Monthly salary',
+  });
 
   publishRealtimeEvent('income.updated', income);
   publishRealtimeEvent('month.summary.updated', await getMonthSummary(monthKey));
+  await recordActivityLog({
+    action: 'salary.updated',
+    entityType: 'salary',
+    entityId: String(income._id),
+    monthKey,
+    dateKey: getDateKey(date),
+    amountRupees,
+    message: `Set monthly salary to ${formatRupeesForLog(amountRupees)} for ${monthKey}`,
+  });
   return income;
 }
 
@@ -182,6 +196,10 @@ export async function addIncome(input: AddIncomeInput) {
   const date = input.date ?? new Date();
   const monthKey = getMonthKey(date);
   const dateKey = getDateKey(date);
+
+  if (isMonthlySalarySource(input.source)) {
+    return setIncomeForMonth(monthKey, input.amountRupees, input.note ?? '');
+  }
 
   const income = await Income.create({
     date,
@@ -194,6 +212,16 @@ export async function addIncome(input: AddIncomeInput) {
 
   publishRealtimeEvent('income.created', income);
   publishRealtimeEvent('month.summary.updated', await getMonthSummary(monthKey));
+  await recordActivityLog({
+    action: 'income.created',
+    entityType: 'income',
+    entityId: String(income._id),
+    monthKey,
+    dateKey,
+    label: income.source,
+    amountRupees: income.amountRupees,
+    message: `Added one-time income ${income.source} ${formatRupeesForLog(income.amountRupees)} on ${dateKey}`,
+  });
   return income;
 }
 
@@ -214,6 +242,17 @@ export async function updateIncome(incomeId: string, input: UpdateIncomeInput) {
   await existing.save();
   publishRealtimeEvent('income.updated', existing);
   publishRealtimeEvent('month.summary.updated', await getMonthSummary(existing.monthKey));
+  const entityType = isMonthlySalarySource(existing.source) ? 'salary' : 'income';
+  await recordActivityLog({
+    action: entityType === 'salary' ? 'salary.updated' : 'income.updated',
+    entityType,
+    entityId: String(existing._id),
+    monthKey: existing.monthKey,
+    dateKey: existing.dateKey,
+    label: existing.source,
+    amountRupees: existing.amountRupees,
+    message: `Updated ${entityType === 'salary' ? 'monthly salary' : `income ${existing.source}`} to ${formatRupeesForLog(existing.amountRupees)} on ${existing.dateKey}`,
+  });
   return existing;
 }
 
@@ -224,6 +263,17 @@ export async function deleteIncome(incomeId: string) {
   }
 
   const monthKey = existing.monthKey;
+  const entityType = isMonthlySalarySource(existing.source) ? 'salary' : 'income';
+  await recordActivityLog({
+    action: entityType === 'salary' ? 'salary.deleted' : 'income.deleted',
+    entityType,
+    entityId: incomeId,
+    monthKey,
+    dateKey: existing.dateKey,
+    label: existing.source,
+    amountRupees: existing.amountRupees,
+    message: `Deleted ${entityType === 'salary' ? 'monthly salary' : `income ${existing.source}`} ${formatRupeesForLog(existing.amountRupees)} from ${existing.dateKey}`,
+  });
   await existing.deleteOne();
   publishRealtimeEvent('income.deleted', { incomeId, monthKey });
   publishRealtimeEvent('month.summary.updated', await getMonthSummary(monthKey));
@@ -238,6 +288,16 @@ export async function setBudgetForMonth(monthKey: string, category: string, limi
     { returnDocument: 'after', upsert: true },
   );
   publishRealtimeEvent('budget.updated', budget);
+  await recordActivityLog({
+    action: 'budget.updated',
+    entityType: 'budget',
+    entityId: String(budget?._id ?? ''),
+    monthKey,
+    dateKey: `${monthKey}-01`,
+    category,
+    amountRupees: limitRupees,
+    message: `Set ${category} budget to ${formatRupeesForLog(limitRupees)} for ${monthKey}`,
+  });
   return budget;
 }
 
@@ -264,6 +324,16 @@ export async function addExpense(input: AddExpenseInput) {
 
   publishRealtimeEvent('expense.created', expense);
   publishRealtimeEvent('month.summary.updated', await getMonthSummary(monthKey));
+  await recordActivityLog({
+    action: 'expense.created',
+    entityType: 'expense',
+    entityId: String(expense._id),
+    monthKey,
+    dateKey,
+    category: input.category,
+    amountRupees: input.amountRupees,
+    message: `Added expense ${input.category} ${formatRupeesForLog(input.amountRupees)} on ${dateKey}`,
+  });
 
   return expense;
 }
@@ -368,6 +438,17 @@ export async function updateExpense(expenseId: string, input: UpdateExpenseInput
     publishRealtimeEvent('month.summary.updated', await getMonthSummary(existing.monthKey));
   }
 
+  await recordActivityLog({
+    action: 'expense.updated',
+    entityType: 'expense',
+    entityId: String(existing._id),
+    monthKey: existing.monthKey,
+    dateKey: existing.dateKey,
+    category: existing.category,
+    amountRupees: existing.amountRupees,
+    message: `Updated expense ${existing.category} to ${formatRupeesForLog(existing.amountRupees)} on ${existing.dateKey}`,
+  });
+
   return existing;
 }
 
@@ -380,6 +461,17 @@ export async function deleteExpense(expenseId: string) {
   const monthKey = existing.monthKey;
   const category = existing.category;
   const date = existing.date;
+
+  await recordActivityLog({
+    action: 'expense.deleted',
+    entityType: 'expense',
+    entityId: expenseId,
+    monthKey,
+    dateKey: existing.dateKey,
+    category,
+    amountRupees: existing.amountRupees,
+    message: `Deleted expense ${category} ${formatRupeesForLog(existing.amountRupees)} from ${existing.dateKey}`,
+  });
 
   await Expense.deleteOne({ _id: existing._id });
 
@@ -419,12 +511,13 @@ export async function getMonthSummary(monthKey: string, scope: ScopeMode = 'full
   };
 
   const previousMonthKey = getPreviousMonthKey(monthKey);
-  const [budgets, previousMonthBudgets, expenses, incomes, ledger] = await Promise.all([
+  const [budgets, previousMonthBudgets, expenses, incomes, ledger, incomePlan] = await Promise.all([
     BudgetCategory.find({ monthKey }).sort({ category: 1 }),
     BudgetCategory.find({ monthKey: previousMonthKey }).select('category limitRupees'),
     Expense.find(expenseQuery).sort({ date: -1 }),
     Income.find(incomeQuery).sort({ date: -1 }),
     SavingsLedgerEntry.find(ledgerQuery).sort({ date: -1, createdAt: -1 }),
+    IncomePlan.findOne({ monthKey }),
   ]);
 
   const previousMonthTotals = await getIncomeAndSpentForMonth(previousMonthKey);
@@ -445,6 +538,7 @@ export async function getMonthSummary(monthKey: string, scope: ScopeMode = 'full
   return {
     monthKey,
     scope,
+    monthlySalaryRupees: incomePlan?.amountRupees ?? 0,
     totalIncomeRupees,
     totalBudgetRupees,
     totalSpentRupees,
@@ -589,6 +683,14 @@ export async function runMonthEndRollover(monthKey: string) {
   });
 
   publishRealtimeEvent('rollover.completed', { monthKey, reconciliationDelta });
+  await recordActivityLog({
+    action: 'system.rollover',
+    entityType: 'system',
+    monthKey,
+    dateKey: `${monthKey}-28`,
+    amountRupees: Math.abs(reconciliationDelta),
+    message: `Ran month-end rollover for ${monthKey} (${formatRupeesForLog(reconciliationDelta)} adjustment)`,
+  });
   return SavingsLedgerEntry.findOne({ monthKey, reason: 'month-end-rollover' });
 }
 

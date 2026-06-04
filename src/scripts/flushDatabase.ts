@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { env } from '../config/env';
+import { ActivityLog } from '../models/ActivityLog';
 import { AnalyticsLog } from '../models/AnalyticsLog';
 import { BudgetCategory } from '../models/BudgetCategory';
 import { CalendarEvent } from '../models/CalendarEvent';
@@ -24,6 +25,7 @@ async function flushDatabase() {
   console.log('Connected. Flushing all LedgerFlow collections...');
 
   const results = await Promise.all([
+    ActivityLog.deleteMany({}),
     Expense.deleteMany({}),
     BudgetCategory.deleteMany({}),
     Income.deleteMany({}),
@@ -38,7 +40,7 @@ async function flushDatabase() {
   ]);
 
   const total = results.reduce((sum, r) => sum + r.deletedCount, 0);
-  console.log(`Done. Deleted ${total} documents across 11 collections.`);
+  console.log(`Done. Deleted ${total} documents across 12 collections.`);
   console.log('You can start fresh from next month.');
 
   await mongoose.disconnect();

@@ -2,6 +2,7 @@ import cors from 'cors';
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { ZodError } from 'zod';
 import { env } from './config/env';
+import { activityRoutes } from './routes/activityRoutes';
 import { calendarRoutes } from './routes/calendarRoutes';
 import { financeRoutes } from './routes/financeRoutes';
 import { healthRoutes } from './routes/healthRoutes';
@@ -16,6 +17,7 @@ export function createApp(): Express {
 
   app.use('/api/health', healthRoutes);
   app.use('/api/realtime', realtimeRoutes);
+  app.use('/api/activity', activityRoutes);
   app.use('/api/finance', financeRoutes);
   app.use('/api/calendar', calendarRoutes);
   app.use('/api/notes', notesRoutes);
