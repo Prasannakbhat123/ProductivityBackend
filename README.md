@@ -33,10 +33,23 @@ npm run dev
 | `DNS_SERVERS` | Optional comma-separated DNS servers if Atlas SRV lookup fails locally |
 | `SMTP_*` | Optional email reminders for calendar events |
 
-## Deploy
+## Deploy (Render)
 
-1. Set all environment variables on your host (Render, Railway, Fly.io, etc.).
-2. Build command: `npm run build`
+| Setting | Value |
+|---------|--------|
+| **Build Command** | `npm install && npm run build` |
+| **Start Command** | `npm start` |
+
+Or connect the repo and use the included `render.yaml` blueprint.
+
+Required env vars on Render: `MONGODB_URI`, `FRONTEND_ORIGIN` (your live frontend URL).
+
+`dist/` is not in git — TypeScript must compile during the build step. If you only run `npm install`, start will fail with `Cannot find module dist/index.js`.
+
+## Deploy (other hosts)
+
+1. Set all environment variables on your host.
+2. Build command: `npm install && npm run build`
 3. Start command: `npm start`
 4. Point your frontend `VITE_API_URL` at this API’s public URL.
 
