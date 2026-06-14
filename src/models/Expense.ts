@@ -7,6 +7,7 @@ const expenseSchema = new Schema(
     monthKey: { type: String, required: true, index: true },
     amountRupees: { type: Number, required: true, min: 0 },
     category: { type: String, required: true, index: true },
+    title: { type: String, default: '', index: true },
     note: { type: String, default: '' },
     source: {
       type: String,

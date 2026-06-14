@@ -187,6 +187,7 @@ financeRoutes.post('/expenses', async (request, response, next) => {
     const schema = z.object({
       amountRupees: rupeesSchema,
       category: z.string().min(1),
+      title: z.string().optional(),
       note: z.string().optional(),
       date: z.coerce.date().optional(),
       source: z.enum(['manual', 'recurring-auto', 'recurring-manual']).optional(),
@@ -237,6 +238,7 @@ financeRoutes.patch('/expenses/:id', async (request, response, next) => {
     const schema = z.object({
       amountRupees: z.number().min(0).optional(),
       category: z.string().min(1).optional(),
+      title: z.string().optional(),
       note: z.string().optional(),
       date: z.coerce.date().optional(),
     });

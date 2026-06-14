@@ -14,6 +14,7 @@ import { publishRealtimeEvent } from './realtime';
 type AddExpenseInput = {
   amountRupees: number;
   category: string;
+  title?: string;
   note?: string;
   date?: Date;
   source?: 'manual' | 'recurring-auto' | 'recurring-manual';
@@ -23,9 +24,15 @@ type AddExpenseInput = {
 type UpdateExpenseInput = {
   amountRupees?: number;
   category?: string;
+  title?: string;
   note?: string;
   date?: Date;
 };
+
+function expenseLogLabel(category: string, title?: string): string {
+  const trimmed = title?.trim();
+  return trimmed || category;
+}
 
 type AddIncomeInput = {
   amountRupees: number;
@@ -313,6 +320,7 @@ export async function addExpense(input: AddExpenseInput) {
     monthKey,
     amountRupees: input.amountRupees,
     category: input.category,
+    title: input.title?.trim() ?? '',
     note: input.note ?? '',
     source: input.source ?? 'manual',
     recurringRuleId: input.recurringRuleId ? new Types.ObjectId(input.recurringRuleId) : null,
@@ -331,8 +339,9 @@ export async function addExpense(input: AddExpenseInput) {
     monthKey,
     dateKey,
     category: input.category,
+    label: expenseLogLabel(input.category, input.title),
     amountRupees: input.amountRupees,
-    message: `Added expense ${input.category} ${formatRupeesForLog(input.amountRupees)} on ${dateKey}`,
+    message: `Added expense ${expenseLogLabel(input.category, input.title)} ${formatRupeesForLog(input.amountRupees)} on ${dateKey}`,
   });
 
   return expense;
@@ -416,6 +425,9 @@ export async function updateExpense(expenseId: string, input: UpdateExpenseInput
   if (typeof input.note === 'string') {
     existing.note = input.note;
   }
+  if (typeof input.title === 'string') {
+    existing.title = input.title.trim();
+  }
   if (input.date) {
     existing.date = input.date;
     existing.dateKey = getDateKey(input.date);
@@ -445,8 +457,9 @@ export async function updateExpense(expenseId: string, input: UpdateExpenseInput
     monthKey: existing.monthKey,
     dateKey: existing.dateKey,
     category: existing.category,
+    label: expenseLogLabel(existing.category, existing.title),
     amountRupees: existing.amountRupees,
-    message: `Updated expense ${existing.category} to ${formatRupeesForLog(existing.amountRupees)} on ${existing.dateKey}`,
+    message: `Updated expense ${expenseLogLabel(existing.category, existing.title)} to ${formatRupeesForLog(existing.amountRupees)} on ${existing.dateKey}`,
   });
 
   return existing;
@@ -461,6 +474,7 @@ export async function deleteExpense(expenseId: string) {
   const monthKey = existing.monthKey;
   const category = existing.category;
   const date = existing.date;
+  const displayLabel = expenseLogLabel(category, existing.title);
 
   await recordActivityLog({
     action: 'expense.deleted',
@@ -469,8 +483,9 @@ export async function deleteExpense(expenseId: string) {
     monthKey,
     dateKey: existing.dateKey,
     category,
+    label: displayLabel,
     amountRupees: existing.amountRupees,
-    message: `Deleted expense ${category} ${formatRupeesForLog(existing.amountRupees)} from ${existing.dateKey}`,
+    message: `Deleted expense ${displayLabel} ${formatRupeesForLog(existing.amountRupees)} from ${existing.dateKey}`,
   });
 
   await Expense.deleteOne({ _id: existing._id });
